@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
@@ -23,24 +24,42 @@ public class WorkService {
     @Autowired
     private WorkRepository workRepository;
 
-    public WorkDTO createWork(WorkDTO workDTO) {
-        LocalDate generatedDate = LocalDate.now();
-        validateDuplicateWork(workDTO, generatedDate);
+    @Autowired
+    private InvoiceService invoiceService;  // Serviço para gerar a nota fiscal
 
+    // Método para criar um novo trabalho
+    public WorkDTO createWork(WorkDTO workDTO) {
+        // Validar se o trabalho já existe
+        validateDuplicateWork(workDTO);
+
+        // Converter o DTO para a entidade Work
         Work work = convertToEntity(workDTO);
-        work.setServiceDate(LocalDate.now());  // Define a serviceDate automaticamente como a data atual
-        work.setInvoiceNumber(generateInvoiceNumber());
+        work.setServiceDate(LocalDate.now());  // Define a data do serviço como a data atual
+        work.setInvoiceNumber(generateInvoiceNumber()); // Gerar número da nota fiscal
+
+        // Salvar o trabalho no banco de dados
         work = workRepository.save(work);
 
+        // Gerar automaticamente o PDF da nota fiscal
+        try {
+            invoiceService.generateInvoice(work);  // Chama o serviço para gerar o PDF da nota fiscal
+        } catch (IOException e) {
+            // Caso haja um erro ao gerar o PDF
+            throw new RuntimeException("Erro ao gerar o PDF da nota fiscal: " + e.getMessage());
+        }
+
+        // Retorna o DTO do trabalho
         return convertToDTO(work);
     }
 
+    // Método para buscar um trabalho pelo ID
     public WorkDTO findWorkById(Long id) {
         Work work = workRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Serviço não encontrado com id: " + id));
         return convertToDTO(work);
     }
 
+    // Método para atualizar os dados de um trabalho
     public Work updateWork(Long id, Work updatedWork) {
         Work work = workRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Serviço não encontrado com id: " + id));
@@ -49,6 +68,7 @@ public class WorkService {
         return workRepository.save(work);
     }
 
+    // Método para buscar todos os trabalhos de um cliente pelo nome
     public List<WorkDTO> findWorksByClientName(String clientName) {
         return workRepository.findByClientNameContainingIgnoreCase(clientName)
                 .stream()
@@ -56,6 +76,7 @@ public class WorkService {
                 .collect(Collectors.toList());
     }
 
+    // Método para buscar todos os trabalhos
     public List<WorkDTO> findAllWorks() {
         return workRepository.findAll()
                 .stream()
@@ -63,6 +84,7 @@ public class WorkService {
                 .collect(Collectors.toList());
     }
 
+    // Método para calcular os ganhos semanais
     public BigDecimal getWeeklyEarnings() {
         LocalDate today = LocalDate.now();
         LocalDate startOfWeek = today.with(DayOfWeek.MONDAY);
@@ -71,6 +93,7 @@ public class WorkService {
         return calculateEarningsBetweenDates(startOfWeek, endOfWeek);
     }
 
+    // Método para calcular os ganhos mensais
     public BigDecimal getMonthlyEarnings() {
         LocalDate today = LocalDate.now();
         LocalDate startOfMonth = today.with(TemporalAdjusters.firstDayOfMonth());
@@ -79,6 +102,7 @@ public class WorkService {
         return calculateEarningsBetweenDates(startOfMonth, endOfMonth);
     }
 
+    // Método para calcular os ganhos por mês e ano
     public BigDecimal getEarningsByMonth(int year, int month) {
         return workRepository.findAll()
                 .stream()
@@ -88,13 +112,12 @@ public class WorkService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    // Métodos auxiliares
-
-    private void validateDuplicateWork(WorkDTO workDTO,LocalDate generatedDate) {
+    // Valida se o trabalho já existe para o cliente, veículo e data
+    private void validateDuplicateWork(WorkDTO workDTO) {
         boolean exists = workRepository.existsByClientNameAndCarPlateAndServiceDate(
                 workDTO.getClientName(),
                 workDTO.getCarPlate(),
-                generatedDate
+                workDTO.getServiceDate()
         );
 
         if (exists) {
@@ -104,10 +127,12 @@ public class WorkService {
         }
     }
 
+    // Gera um número de nota fiscal único
     private String generateInvoiceNumber() {
         return "INV-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
     }
 
+    // Calcula os ganhos entre duas datas
     private BigDecimal calculateEarningsBetweenDates(LocalDate startDate, LocalDate endDate) {
         return workRepository.findAll()
                 .stream()
@@ -117,6 +142,7 @@ public class WorkService {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
+    // Atualiza os campos do trabalho
     private void updateWorkFields(Work work, Work updatedWork) {
         work.setClientName(updatedWork.getClientName());
         work.setCarModel(updatedWork.getCarModel());
@@ -127,6 +153,7 @@ public class WorkService {
         work.setTotalPrice(updatedWork.getTotalPrice());
     }
 
+    // Converte uma entidade Work para um DTO
     public WorkDTO convertToDTO(Work work) {
         WorkDTO dto = new WorkDTO();
         dto.setId(work.getId());
@@ -140,6 +167,7 @@ public class WorkService {
         return dto;
     }
 
+    // Converte um DTO para a entidade Work
     public Work convertToEntity(WorkDTO dto) {
         Work work = new Work();
         work.setId(dto.getId());
